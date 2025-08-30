@@ -1,5 +1,5 @@
-streamlit
-numpy
-scipy
-matplotlib
-st-audiorec
+streamlit>=1.20.0
+numpy>=1.20.0
+scipy>=1.8.0
+matplotlib>=3.5.0
+st-audiorec>=0.1.2
