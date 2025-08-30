@@ -1,132 +1,165 @@
 import streamlit as st
 import numpy as np
-import cv2
-from PIL import Image
+import matplotlib.pyplot as plt
+from scipy.io import wavfile
+from scipy import signal
+from st_audiorec import st_audiorec
+import io
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
+# --- Configuración de la Página ---
 st.set_page_config(
-    page_title="Inventario de Bodega",
-    page_icon="📦",
+    page_title="Analizador de Espectro de Audio",
+    page_icon="🎙️",
     layout="wide"
 )
 
-# --- TÍTULO Y DESCRIPCIÓN ---
-st.title("📦 Sistema de Inventario de Bodega")
+# --- Estilos CSS Personalizados (Opcional) ---
+st.markdown("""
+<style>
+    /* Estilos para que la app se vea más moderna */
+    .stApp {
+        background-color: #f0f2f6;
+    }
+    .stButton>button {
+        border-radius: 20px;
+        border: 1px solid #4B8BBE;
+        background-color: #4B8BBE;
+        color: white;
+    }
+    .stButton>button:hover {
+        border: 1px solid #3A6A94;
+        background-color: #3A6A94;
+    }
+    h1 {
+        color: #3A6A94;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
+# --- Título de la Aplicación ---
+st.title("🎙️ Analizador de Espectro de Audio")
 st.write(
-    "Utiliza la cámara para capturar una imagen de la estantería. "
-    "El sistema detectará los productos, los contará y mostrará su ubicación."
+    "Graba audio desde tu micrófono y visualiza su espectrograma en tiempo real. "
+    "Presiona el ícono del micrófono para comenzar a grabar."
 )
 
-# --- FUNCIÓN DE DETECCIÓN SIMULADA ---
-def detectar_productos_simulado(imagen_np):
-    """
-    Esta es una función SIMULADA de detección de objetos.
-    En un caso real, aquí es donde llamarías a tu modelo de IA (ej. YOLO, TensorFlow, PyTorch).
+# --- Widget para Grabar Audio ---
+# Este componente gestiona el acceso al micrófono desde el navegador.
+wav_audio_data = st_audiorec()
 
-    Retorna una lista de diccionarios, donde cada diccionario representa un producto detectado.
-    """
-    # Coordenadas y etiquetas de los productos "detectados"
-    productos_fijos = [
-        {"label": "Caja", "box": (50, 70, 250, 300), "confidence": 0.92},
-        {"label": "Botella", "box": (300, 150, 400, 400), "confidence": 0.88},
-        {"label": "Caja", "box": (450, 100, 600, 280), "confidence": 0.95},
-        {"label": "Lata", "box": (80, 320, 180, 450), "confidence": 0.76},
-    ]
-    return productos_fijos
+# Espacio en blanco para mejorar el diseño
+st.write("")
+st.write("---")
 
-# --- FUNCIÓN PARA DIBUJAR EN LA IMAGEN ---
-def dibujar_detecciones(imagen, detecciones, producto_buscado=""):
-    """
-    Dibuja los cuadros delimitadores y las etiquetas sobre la imagen.
-    """
-    img_con_dibujos = np.array(imagen).copy()
-    for det in detecciones:
-        label = det["label"]
-        box = det["box"]
-        x1, y1, x2, y2 = box
+# --- Panel de Configuración ---
+st.header("⚙️ Ingrese a la configuración")
 
-        # Color por defecto (verde)
-        color = (36, 255, 12)
-        
-        # Si hay una búsqueda, resalta el producto buscado en otro color (amarillo)
-        if producto_buscado.lower() in label.lower():
-            color = (255, 255, 0)
-
-        # Dibujar el rectángulo
-        cv2.rectangle(img_con_dibujos, (x1, y1), (x2, y2), color, 2)
-        
-        # Dibujar la etiqueta
-        texto = f"{label}: {det['confidence']:.2f}"
-        cv2.putText(img_con_dibujos, texto, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
-        
-    return img_con_dibujos
-
-# --- ESTRUCTURA DE LA INTERFAZ ---
-col1, col2 = st.columns([2, 1])
+# Dividimos el área de configuración en columnas para un mejor diseño
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
-    st.header("📷 Captura de la Cámara")
-    img_buffer = st.camera_input("Toma una foto", key="camera")
-
-    if img_buffer:
-        # Convertir el buffer de imagen a un objeto de imagen PIL
-        img_pil = Image.open(img_buffer)
-        
-        # Convertir la imagen PIL a un array de NumPy para OpenCV
-        img_np = np.array(img_pil)
-
-        # --- LÓGICA PRINCIPAL ---
-        # 1. Detectar productos (usando la función simulada)
-        productos_detectados = detectar_productos_simulado(img_np)
-        
-        # 2. Obtener el producto buscado en la otra columna
-        # (Se usa session_state para acceder al valor desde aquí)
-        producto_a_buscar = st.session_state.get("search_query", "")
-
-        # 3. Dibujar las detecciones en la imagen
-        imagen_resultado = dibujar_detecciones(img_np, productos_detectados, producto_a_buscar)
-
-        # 4. Mostrar la imagen con las detecciones
-        st.image(imagen_resultado, caption="Imagen Procesada", use_column_width=True)
+    # Selector para la escala de frecuencia
+    escala_frecuencia = st.selectbox(
+        "Escala de frecuencia",
+        ("Lineal", "Logarítmica"),
+        index=1 # Por defecto, logarítmica
+    )
 
 with col2:
-    st.header("📊 Análisis y Búsqueda")
-    
-    # Cuadro de texto para buscar producto
-    buscar_producto = st.text_input("Buscar Producto", key="search_query", placeholder="Ej: Caja, Botella...")
+    # Selector para el mapa de colores del espectrograma
+    mapa_color = st.selectbox(
+        "Color",
+        ("Rojo", "Azul", "Verde", "Plasma", "Inferno", "Viridis"),
+        index=0 # Por defecto, Rojo
+    )
+    # Mapeo de nombres de color a mapas de color de Matplotlib
+    color_map_dict = {
+        "Rojo": "Reds",
+        "Azul": "Blues",
+        "Verde": "Greens",
+        "Plasma": "plasma",
+        "Inferno": "inferno",
+        "Viridis": "viridis"
+    }
+    selected_cmap = color_map_dict[mapa_color]
 
-    st.subheader("Descripción")
-    
-    # Lógica de descripción
-    if img_buffer:
-        # Contar productos
-        conteo_productos = {}
-        for producto in productos_detectados:
-            label = producto["label"]
-            conteo_productos[label] = conteo_productos.get(label, 0) + 1
+with col3:
+    # Selector para el brillo o estilo del tema
+    brillo = st.selectbox(
+        "Brillo",
+        ("Normal", "Oscuro"),
+        index=0
+    )
+    plot_face_color = 'white' if brillo == 'Normal' else '#0E1117'
+    plot_text_color = 'black' if brillo == 'Normal' else 'white'
+
+
+# --- Procesamiento y Visualización del Audio ---
+if wav_audio_data is not None:
+    st.subheader("Análisis del Audio Grabado")
+    try:
+        # Convertimos los datos de audio en bytes a un formato que podamos usar
+        audio_bytes = io.BytesIO(wav_audio_data)
         
-        # Si no hay búsqueda, mostrar el resumen general
-        if not buscar_producto:
-            st.info("Resumen de inventario detectado en la imagen.")
-            for nombre, cantidad in conteo_productos.items():
-                st.markdown(f"- **{nombre}**: {cantidad} unidad(es)")
-        else:
-            # Si hay búsqueda, mostrar detalles del producto buscado
-            resultados_busqueda = [p for p in productos_detectados if buscar_producto.lower() in p["label"].lower()]
+        # Leemos el archivo WAV virtual
+        samplerate, data = wavfile.read(audio_bytes)
+        
+        # Si el audio es estéreo, tomamos solo un canal
+        if len(data.shape) > 1:
+            data = data[:, 0]
             
-            if resultados_busqueda:
-                cantidad = len(resultados_busqueda)
-                st.success(f"Se encontraron {cantidad} unidad(es) de '{buscar_producto}'.")
-                
-                st.markdown("#### Ubicaciones:")
-                for i, res in enumerate(resultados_busqueda):
-                    x1, y1, x2, y2 = res["box"]
-                    st.markdown(f"- **Item {i+1}**: Ubicado en el área de coordenadas ({x1}, {y1}) a ({x2}, {y2}).")
-            else:
-                st.warning(f"No se encontró ningún producto con el nombre '{buscar_producto}'.")
-    else:
-        st.info("Esperando una imagen para analizar...")
+        st.write(f"**Tasa de muestreo:** `{samplerate} Hz`")
+        st.write(f"**Duración:** `{len(data)/samplerate:.2f} segundos`")
 
-# Botón para refrescar la página (opcional, ya que Streamlit es reactivo)
-if st.button("🔄 Actualizar"):
-    st.rerun()
+        # Mostramos el reproductor de audio
+        st.audio(wav_audio_data, format='audio/wav')
+
+        # --- Generación del Espectrograma ---
+        st.write("### Espectrograma de Frecuencia")
+
+        # Creamos la figura para el gráfico
+        fig, ax = plt.subplots(figsize=(12, 6))
+        
+        # Establecemos el color de fondo y de texto según la selección
+        fig.patch.set_facecolor(plot_face_color)
+        ax.set_facecolor(plot_face_color)
+        
+        # Calculamos el espectrograma
+        frecuencias, tiempos, Sxx = signal.spectrogram(data, samplerate)
+
+        # Graficamos el espectrograma
+        mesh = ax.pcolormesh(tiempos, frecuencias, 10 * np.log10(Sxx + 1e-9), cmap=selected_cmap, shading='gouraud')
+        
+        # Configuramos etiquetas y título con el color adecuado
+        ax.set_ylabel('Frecuencia [Hz]', color=plot_text_color)
+        ax.set_xlabel('Tiempo [s]', color=plot_text_color)
+        ax.set_title('Espectrograma', color=plot_text_color)
+
+        # Configuramos los colores de los ejes
+        ax.tick_params(axis='x', colors=plot_text_color)
+        ax.tick_params(axis='y', colors=plot_text_color)
+        ax.spines['bottom'].set_color(plot_text_color)
+        ax.spines['top'].set_color(plot_text_color)
+        ax.spines['left'].set_color(plot_text_color)
+        ax.spines['right'].set_color(plot_text_color)
+        
+        # Aplicamos la escala de frecuencia seleccionada
+        if escala_frecuencia == 'Logarítmica':
+            ax.set_yscale('log')
+            # Evitar que el eje Y llegue a cero en escala logarítmica
+            ax.set_ylim(bottom=max(1, frecuencias[frecuencias > 0].min()), top=samplerate / 2)
+            
+        # Añadimos una barra de color
+        cbar = fig.colorbar(mesh, ax=ax)
+        cbar.set_label('Intensidad [dB]', color=plot_text_color)
+        cbar.ax.tick_params(colors=plot_text_color)
+
+        # Mostramos el gráfico en Streamlit
+        st.pyplot(fig)
+
+    except Exception as e:
+        st.error(f"Ocurrió un error al procesar el audio: {e}")
+        st.info("Asegúrate de que la grabación contenga audio y no sea demasiado corta.")
+else:
+    st.info("Esperando a que se grabe un audio...")
